@@ -1,0 +1,139 @@
+#define SIZE 512
+
+/* A ring handle for enqueing/dequeuing into
+typedef struct ring_handle {
+    ring_buffer_t *used_ring;
+    ring_buffer_t *avail_ring;
+    // Function to be used to signal that work is queued in the used_ring
+    notify_fn notify;
+} ring_handle_t;
+*/
+
+fun ring_init(1 ring_addr, 1 avail, 1 used) {
+    stw ring_addr, used;
+    stw ring_addr + WORD_SIZE, avail;
+    stw ring_addr + 2 * WORD_SIZE, 0;
+    ring_buffer_write_idx_set(used, 0);
+    ring_buffer_read_idx_set(used, 0);
+    ring_buffer_write_idx_set(avail, 0);
+    ring_buffer_read_idx_set(avail, 0);
+	return 0;
+}
+
+fun ring_empty(1 ring) {
+    var write_idx = 0;
+    var read_idx = 0;
+    write_idx = ring_buffer_write_idx(ring);
+    read_idx = ring_buffer_read_idx(ring);
+
+    var diff = 0;
+    diff = pnk_modulo(write_idx - read_idx, SIZE);
+    return (diff == 0);
+}
+
+fun ring_full(1 ring) {
+    var write_idx = 0;
+    var read_idx = 0;
+    write_idx = ring_buffer_write_idx(ring);
+    read_idx = ring_buffer_read_idx(ring);
+
+    var diff = 0;
+    diff = pnk_modulo(write_idx - read_idx + 1, SIZE);
+    return (diff == 0);
+}
+
+fun ring_size(1 ring) {
+    var write_idx = 0;
+    var read_idx = 0;
+    write_idx = ring_buffer_write_idx(ring);
+    read_idx = ring_buffer_read_idx(ring);
+    return (write_idx - read_idx);
+}
+
+fun notify(1 ring_handle_addr) {
+    var notify = lds {1} ring_handle_addr + 2 * WORD_SIZE;
+    @funcall(notify, 1, 0, 0);
+    return 0;
+}
+
+fun enqueue(1 ring, 1 buffer, 1 len, 1 cookie) {
+    var full = 0;
+    full = ring_full(ring);
+    if (full) {
+        return -1;
+    }
+
+    var write_idx = 0;
+    write_idx = ring_buffer_write_idx(ring);
+    var buffer_ptr = 0;
+    buffer_ptr = ring_buffer_buffers(ring, write_idx);
+
+    buff_desc_encoded_addr_set(buffer_ptr, buffer);
+    buff_desc_len_set(buffer_ptr, len);
+    buff_desc_cookie_set(buffer_ptr, cookie);
+
+    ring_buffer_write_idx_set(ring, (write_idx + 1));
+    @THREAD_MEMORY_RELEASE(0,42,0,42);
+    return 0;
+}
+
+fun dequeue(1 ring, 1 addr, 1 len_ptr, 1 cookie_ptr) {
+    var empty = 0;
+    empty = ring_empty(ring);
+    if (empty) {
+        return -1;
+    }
+
+    var read_idx = 0;
+    read_idx = ring_buffer_read_idx(ring);
+    var buffer = 0;
+    buffer = ring_buffer_buffers(ring, read_idx);
+
+    // *addr = ring->buffers[ring->read_idx % SIZE].encoded_addr;
+    var encoded_addr = 0;
+    encoded_addr = buff_desc_encoded_addr(buffer);
+    !stw encoded_addr, addr;
+
+    // *len = ring->buffers[ring->read_idx % SIZE].len;
+    var len = 0;
+    len = buff_desc_len(buffer);
+    !stw len, len_ptr;
+
+    // *cookie = ring->buffers[ring->read_idx % SIZE].cookie;
+    var cookie = 0;
+    cookie = buff_desc_cookie(buffer);
+    !stw cookie, cookie_ptr;
+
+    @THREAD_MEMORY_RELEASE(0,42,0,42);
+    ring_buffer_read_idx_set(ring, (read_idx + 1));
+    return 0;
+}
+
+fun enqueue_used(1 ring, 1 addr, 1 len, 1 cookie) {
+    var used_ring = lds {1} ring;
+    var ret = 0;
+    ret = enqueue(used_ring, addr, len, cookie);
+    return ret;
+}
+
+fun enqueue_avail(1 ring, 1 addr, 1 len, 1 cookie) {
+    var avail_ring = lds {1} ring + WORD_SIZE;
+    var ret = 0;
+    ret = enqueue(avail_ring, addr, len, cookie);
+    return ret;
+}
+
+fun dequeue_used(1 ring, 1 addr, 1 len_ptr, 1 cookie_ptr) {
+    var used_ring = lds {1} ring;
+    var ret = 0;
+    ret = dequeue(used_ring, addr, len_ptr, cookie_ptr);
+    return ret;
+}
+
+fun dequeue_avail(1 ring, 1 addr, 1 len_ptr, 1 cookie_ptr) {
+    var avail_ring = lds {1} ring + WORD_SIZE;
+    var ret = 0;
+    ret = dequeue(avail_ring, addr, len_ptr, cookie_ptr);
+    return ret;
+}
+
